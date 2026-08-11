@@ -1,11 +1,11 @@
 <?php
 /**
  * Plugin Name: Broken Links Scanner
- * Plugin URI: https://example.com/broken-links-scanner
+ * Plugin URI: https://github.com/cBanksBlueCanopy/wp-broken-links-scanner
  * Description: Scan your WordPress site for broken links (404 errors) and view results in the admin panel
  * Version: 1.0.0
- * Author: Your Name
- * Author URI: https://example.com
+ * Author: Chris Banks
+ * Author URI: https://mahoneymarketingllc.com/
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: broken-links-scanner

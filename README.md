@@ -15,7 +15,13 @@ A comprehensive WordPress plugin that scans all pages and posts on your website 
 
 ## Installation
 
-### Method 1: Manual Installation
+
+### Method 1: Automatic Installation
+
+1. Download the code as a zip file from the github repo.
+2. Upload zip file to WP-Admin -> Plugins -> add new.
+
+### Method 2: Manual Installation
 
 1. Download the plugin files
 2. Create a folder named `broken-links-scanner` in your WordPress plugins directory:
@@ -29,7 +35,7 @@ A comprehensive WordPress plugin that scans all pages and posts on your website 
 
 4. Go to **Plugins** in the WordPress admin and activate the plugin
 
-### Method 2: Upload via WordPress Admin
+### Method 3: Upload via WordPress Admin
 
 1. Download the plugin as a ZIP file with the following structure:
    ```
