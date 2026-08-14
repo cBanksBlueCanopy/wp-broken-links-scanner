@@ -3,7 +3,7 @@
  * Plugin Name: Broken Links Scanner
  * Plugin URI: https://github.com/cBanksBlueCanopy/wp-broken-links-scanner
  * Description: Scan your WordPress site for broken links (404 errors) and view results in the admin panel
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Chris Banks
  * Author URI: https://mahoneymarketingllc.com/
  * License: GPL v2 or later
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'BROKEN_LINKS_SCANNER_VERSION', '1.0.0' );
+define( 'BROKEN_LINKS_SCANNER_VERSION', '1.1.0' );
 define( 'BROKEN_LINKS_SCANNER_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BROKEN_LINKS_SCANNER_URL', plugin_dir_url( __FILE__ ) );
 
@@ -98,6 +98,7 @@ class Broken_Links_Scanner {
         }
 
         $broken_links = get_option( 'broken_links_results', array() );
+        $multiple_h1_results = get_option( 'broken_links_multiple_h1_results', array() );
         $scan_time = get_option( 'broken_links_scan_time', '' );
         ?>
         <div class="wrap">
@@ -108,7 +109,7 @@ class Broken_Links_Scanner {
                     <button id="bls-scan-button" class="button button-primary">
                         <?php echo esc_html__( 'Start Scan', 'broken-links-scanner' ); ?>
                     </button>
-                    <?php if ( ! empty( $broken_links ) ) : ?>
+                    <?php if ( ! empty( $broken_links ) || ! empty( $multiple_h1_results ) ) : ?>
                         <button id="bls-clear-button" class="button">
                             <?php echo esc_html__( 'Clear Results', 'broken-links-scanner' ); ?>
                         </button>
@@ -187,6 +188,54 @@ class Broken_Links_Scanner {
                         </table>
                     </div>
                 <?php endif; ?>
+
+                <?php if ( ! empty( $multiple_h1_results ) ) : ?>
+                    <div class="bls-results bls-h1-results">
+                        <h2><?php echo esc_html__( 'Pages With Multiple H1 Tags', 'broken-links-scanner' ); ?></h2>
+                        <p class="bls-count">
+                            <?php
+                            echo sprintf(
+                                /* translators: %d: number of pages with multiple H1 tags */
+                                esc_html__( 'Pages with multiple H1 tags: %d', 'broken-links-scanner' ),
+                                count( $multiple_h1_results )
+                            );
+                            ?>
+                        </p>
+                        <table class="wp-list-table widefat striped">
+                            <thead>
+                                <tr>
+                                    <th class="column-page"><?php echo esc_html__( 'Page Name', 'broken-links-scanner' ); ?></th>
+                                    <th><?php echo esc_html__( 'H1 Tags', 'broken-links-scanner' ); ?></th>
+                                    <th><?php echo esc_html__( 'Page URL', 'broken-links-scanner' ); ?></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ( $multiple_h1_results as $h1_result ) : ?>
+                                    <tr>
+                                        <td class="column-page">
+                                            <?php
+                                            echo esc_html( $h1_result['page_name'] ) . ' ';
+                                            echo sprintf(
+                                                '(<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>)',
+                                                esc_url( get_edit_post_link( $h1_result['page_id'] ) ),
+                                                esc_html__( 'Edit', 'broken-links-scanner' )
+                                            );
+                                            ?>
+                                        </td>
+                                        <td>
+                                            <strong><?php echo esc_html( $h1_result['h1_count'] ); ?></strong>
+                                        </td>
+                                        <td>
+                                            <a href="<?php echo esc_url( $h1_result['url'] ); ?>" target="_blank" rel="noopener noreferrer">
+                                                <?php echo esc_html( $h1_result['url'] ); ?>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
         <?php
@@ -202,19 +251,24 @@ class Broken_Links_Scanner {
             wp_send_json_error( __( 'Insufficient permissions', 'broken-links-scanner' ) );
         }
 
-        $broken_links = $this->scan_site_for_broken_links();
+        $scan_results = $this->scan_site_for_broken_links();
+        $broken_links = $scan_results['broken_links'];
+        $multiple_h1_results = $scan_results['multiple_h1_results'];
         $scan_time = current_time( 'mysql' );
 
         // Save results
         update_option( 'broken_links_results', $broken_links );
+        update_option( 'broken_links_multiple_h1_results', $multiple_h1_results );
         update_option( 'broken_links_scan_time', $scan_time );
 
         wp_send_json_success( array(
             'count' => count( $broken_links ),
+            'h1_count' => count( $multiple_h1_results ),
             'message' => sprintf(
-                /* translators: %d: number of broken links */
-                __( 'Scan completed. Found %d broken links.', 'broken-links-scanner' ),
-                count( $broken_links )
+                /* translators: %d: number of broken links, %d: number of pages with multiple H1s */
+                __( 'Scan completed. Found %1$d broken links and %2$d pages with multiple H1 tags.', 'broken-links-scanner' ),
+                count( $broken_links ),
+                count( $multiple_h1_results )
             ),
         ) );
     }
@@ -230,6 +284,7 @@ class Broken_Links_Scanner {
         }
 
         delete_option( 'broken_links_results' );
+        delete_option( 'broken_links_multiple_h1_results' );
         delete_option( 'broken_links_scan_time' );
 
         wp_send_json_success( __( 'Results cleared.', 'broken-links-scanner' ) );
@@ -240,8 +295,10 @@ class Broken_Links_Scanner {
      */
     private function scan_site_for_broken_links() {
         $broken_links = array();
+        $multiple_h1_results = array();
+        $status_cache = array();
 
-        // Get all published posts and pages
+        // Get all published posts and pages.
         $args = array(
             'post_type' => array( 'post', 'page' ),
             'post_status' => 'publish',
@@ -251,12 +308,44 @@ class Broken_Links_Scanner {
         $posts = get_posts( $args );
 
         foreach ( $posts as $post ) {
-            // Get all links from post content
-            $links = $this->extract_links_from_content( $post->post_content );
+            $page_url = get_permalink( $post->ID );
+
+            if ( ! $page_url ) {
+                continue;
+            }
+
+            /*
+             * Scan the rendered frontend page instead of post_content.
+             * This includes links output by the theme, Elementor, widgets,
+             * header, footer, menus, and the page content.
+             */
+            $page_html = $this->get_rendered_page_html( $page_url );
+
+            if ( false === $page_html ) {
+                // Fall back to post content if the frontend page cannot be fetched.
+                $links = $this->extract_links_from_content( $post->post_content );
+                $h1_count = 0;
+            } else {
+                $links = $this->extract_links_from_html( $page_html, $page_url );
+                $h1_count = $this->count_h1_tags( $page_html );
+            }
+
+            if ( $h1_count > 1 ) {
+                $multiple_h1_results[] = array(
+                    'page_id' => $post->ID,
+                    'page_name' => $post->post_title,
+                    'url' => $page_url,
+                    'h1_count' => $h1_count,
+                );
+            }
 
             foreach ( $links as $link ) {
-                // Check if link is broken
-                $status_code = $this->check_link_status( $link );
+                // Cache status checks so repeated header/footer links are not requested over and over.
+                if ( ! array_key_exists( $link, $status_cache ) ) {
+                    $status_cache[ $link ] = $this->check_link_status( $link );
+                }
+
+                $status_code = $status_cache[ $link ];
 
                 if ( 404 === $status_code ) {
                     $broken_links[] = array(
@@ -268,7 +357,165 @@ class Broken_Links_Scanner {
             }
         }
 
-        return $broken_links;
+        return array(
+            'broken_links' => $broken_links,
+            'multiple_h1_results' => $multiple_h1_results,
+        );
+    }
+
+    /**
+     * Fetch the rendered frontend page so theme/header/footer links are included.
+     */
+    private function get_rendered_page_html( $url ) {
+        $response = wp_remote_get(
+            $url,
+            array(
+                'timeout' => 15,
+                'redirection' => 5,
+                'sslverify' => apply_filters( 'https_local_ssl_verify', false ),
+                'user-agent' => 'WordPress/' . get_bloginfo( 'version' ) . '; ' . get_bloginfo( 'url' ),
+            )
+        );
+
+        if ( is_wp_error( $response ) ) {
+            return false;
+        }
+
+        $status_code = wp_remote_retrieve_response_code( $response );
+
+        if ( $status_code < 200 || $status_code >= 400 ) {
+            return false;
+        }
+
+        return wp_remote_retrieve_body( $response );
+    }
+
+    /**
+     * Extract links from the complete rendered HTML and convert relative URLs to absolute URLs.
+     */
+    private function extract_links_from_html( $html, $page_url ) {
+        $links = array();
+
+        if ( class_exists( 'DOMDocument' ) ) {
+            $previous_state = libxml_use_internal_errors( true );
+            $dom = new DOMDocument();
+
+            // Suppress warnings caused by modern HTML5 markup.
+            $dom->loadHTML( '<?xml encoding="UTF-8">' . $html );
+            libxml_clear_errors();
+            libxml_use_internal_errors( $previous_state );
+
+            foreach ( $dom->getElementsByTagName( 'a' ) as $anchor ) {
+                $href = trim( $anchor->getAttribute( 'href' ) );
+
+                if ( empty( $href ) ) {
+                    continue;
+                }
+
+                $absolute_url = $this->make_absolute_url( $href, $page_url );
+
+                if ( $absolute_url ) {
+                    $links[] = $absolute_url;
+                }
+            }
+        } elseif ( preg_match_all( '/<a[^>]+href=["\']([^"\']+)["\']/i', $html, $matches ) ) {
+            foreach ( $matches[1] as $href ) {
+                $absolute_url = $this->make_absolute_url( trim( $href ), $page_url );
+
+                if ( $absolute_url ) {
+                    $links[] = $absolute_url;
+                }
+            }
+        }
+
+        return array_values( array_unique( $links ) );
+    }
+
+    /**
+     * Convert a relative URL into an absolute HTTP(S) URL.
+     */
+    private function make_absolute_url( $url, $base_url ) {
+        if ( empty( $url ) ) {
+            return '';
+        }
+
+        // Remove URL fragments because they are not sent to the server.
+        $fragment_position = strpos( $url, '#' );
+        if ( false !== $fragment_position ) {
+            $url = substr( $url, 0, $fragment_position );
+        }
+
+        // Ignore in-page anchors and non-web protocols.
+        if ( empty( $url ) || preg_match( '/^(?:mailto:|tel:|javascript:|data:|sms:)/i', $url ) ) {
+            return '';
+        }
+
+        // Protocol-relative URL.
+        if ( 0 === strpos( $url, '//' ) ) {
+            $scheme = wp_parse_url( $base_url, PHP_URL_SCHEME );
+            return ( $scheme ? $scheme . ':' : 'https:' ) . $url;
+        }
+
+        // Already absolute HTTP(S) URL.
+        if ( preg_match( '/^https?:\/\//i', $url ) ) {
+            return $url;
+        }
+
+        $base = wp_parse_url( $base_url );
+
+        if ( empty( $base['scheme'] ) || empty( $base['host'] ) ) {
+            return '';
+        }
+
+        $scheme = $base['scheme'];
+        $host = $base['host'];
+        $port = ! empty( $base['port'] ) ? ':' . $base['port'] : '';
+
+        if ( '/' === $url[0] ) {
+            $path = $url;
+        } else {
+            $base_path = isset( $base['path'] ) ? $base['path'] : '/';
+            $directory = trailingslashit( dirname( $base_path ) );
+            $path = $directory . $url;
+        }
+
+        // Normalize /./ and /../ path segments.
+        $segments = explode( '/', $path );
+        $normalized = array();
+
+        foreach ( $segments as $segment ) {
+            if ( '' === $segment || '.' === $segment ) {
+                continue;
+            }
+
+            if ( '..' === $segment ) {
+                array_pop( $normalized );
+            } else {
+                $normalized[] = $segment;
+            }
+        }
+
+        $path = '/' . implode( '/', $normalized );
+
+        // Preserve a query string when one is present in the relative URL.
+        return $scheme . '://' . $host . $port . $path;
+    }
+
+    /**
+     * Count H1 elements in the complete rendered HTML.
+     */
+    private function count_h1_tags( $html ) {
+        if ( class_exists( 'DOMDocument' ) ) {
+            $previous_state = libxml_use_internal_errors( true );
+            $dom = new DOMDocument();
+            $dom->loadHTML( '<?xml encoding="UTF-8">' . $html );
+            libxml_clear_errors();
+            libxml_use_internal_errors( $previous_state );
+
+            return $dom->getElementsByTagName( 'h1' )->length;
+        }
+
+        return preg_match_all( '/<h1\b[^>]*>/i', $html, $matches );
     }
 
     /**
@@ -347,8 +594,9 @@ class Broken_Links_Scanner {
             wp_die( __( 'You do not have permission to perform this action.', 'broken-links-scanner' ) );
         }
 
-        $broken_links = $this->scan_site_for_broken_links();
-        update_option( 'broken_links_results', $broken_links );
+        $scan_results = $this->scan_site_for_broken_links();
+        update_option( 'broken_links_results', $scan_results['broken_links'] );
+        update_option( 'broken_links_multiple_h1_results', $scan_results['multiple_h1_results'] );
         update_option( 'broken_links_scan_time', current_time( 'mysql' ) );
 
         wp_safe_remote_post( $_SERVER['REQUEST_URI'] );

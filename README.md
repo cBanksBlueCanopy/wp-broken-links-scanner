@@ -203,6 +203,12 @@ This plugin is licensed under the GPL v2 or later. See LICENSE file for details.
 
 ## Changelog
 
+### Version 1.1.0
+- Scans the rendered frontend of each published post/page, including theme header and footer links
+- Resolves relative links before checking their HTTP status
+- Detects pages containing multiple H1 tags and reports the page name and H1 count
+- Caches repeated link status checks to reduce duplicate requests
+
 ### Version 1.0.0
 - Initial release
 - Broken link detection (404 errors)
