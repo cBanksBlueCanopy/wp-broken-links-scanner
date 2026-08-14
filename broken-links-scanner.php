@@ -151,7 +151,7 @@ class Broken_Links_Scanner {
                             <thead>
                                 <tr>
                                     <th class="column-link"><?php echo esc_html__( 'Broken Link', 'broken-links-scanner' ); ?></th>
-                                    <th class="column-page"><?php echo esc_html__( 'Found On Page', 'broken-links-scanner' ); ?></th>
+                                    <th class="column-page"><?php echo esc_html__( 'Found On', 'broken-links-scanner' ); ?></th>
                                     <th class="column-status"><?php echo esc_html__( 'HTTP Status', 'broken-links-scanner' ); ?></th>
                                 </tr>
                             </thead>
@@ -163,17 +163,26 @@ class Broken_Links_Scanner {
                                         </td>
                                         <td class="column-page">
                                             <?php
-                                            $page_id = $broken_link['page_id'];
-                                            $page = get_post( $page_id );
-                                            if ( $page ) :
-                                                echo esc_html( $page->post_title ) . ' ';
-                                                echo sprintf(
-                                                    '(<a href="%s" target="_blank">%s</a>)',
-                                                    esc_url( get_edit_post_link( $page_id ) ),
-                                                    esc_html__( 'Edit', 'broken-links-scanner' )
-                                                );
+                                            $location = isset( $broken_link['location'] ) ? $broken_link['location'] : 'page';
+                                            if ( 'menu' === $location ) :
+                                                echo esc_html__( 'Found in Menu', 'broken-links-scanner' );
+                                            elseif ( 'footer' === $location ) :
+                                                echo esc_html__( 'Found in Footer', 'broken-links-scanner' );
+                                            elseif ( 'header' === $location ) :
+                                                echo esc_html__( 'Found in Header', 'broken-links-scanner' );
                                             else :
-                                                echo esc_html__( 'Unknown Page', 'broken-links-scanner' );
+                                                $page_id = $broken_link['page_id'];
+                                                $page = get_post( $page_id );
+                                                if ( $page ) :
+                                                    echo esc_html( $page->post_title ) . ' ';
+                                                    echo sprintf(
+                                                        '(<a href="%s" target="_blank">%s</a>)',
+                                                        esc_url( get_edit_post_link( $page_id ) ),
+                                                        esc_html__( 'Edit', 'broken-links-scanner' )
+                                                    );
+                                                else :
+                                                    echo esc_html__( 'Unknown Page', 'broken-links-scanner' );
+                                                endif;
                                             endif;
                                             ?>
                                         </td>
@@ -191,12 +200,12 @@ class Broken_Links_Scanner {
 
                 <?php if ( ! empty( $multiple_h1_results ) ) : ?>
                     <div class="bls-results bls-h1-results">
-                        <h2><?php echo esc_html__( 'Pages With Multiple H1 Tags', 'broken-links-scanner' ); ?></h2>
+                        <h2><?php echo esc_html__( 'H1 Tag Issues', 'broken-links-scanner' ); ?></h2>
                         <p class="bls-count">
                             <?php
                             echo sprintf(
-                                /* translators: %d: number of pages with multiple H1 tags */
-                                esc_html__( 'Pages with multiple H1 tags: %d', 'broken-links-scanner' ),
+                                /* translators: %d: number of pages with H1 tag issues */
+                                esc_html__( 'Pages with H1 tag issues: %d', 'broken-links-scanner' ),
                                 count( $multiple_h1_results )
                             );
                             ?>
@@ -206,6 +215,7 @@ class Broken_Links_Scanner {
                                 <tr>
                                     <th class="column-page"><?php echo esc_html__( 'Page Name', 'broken-links-scanner' ); ?></th>
                                     <th><?php echo esc_html__( 'H1 Tags', 'broken-links-scanner' ); ?></th>
+                                    <th><?php echo esc_html__( 'Issue', 'broken-links-scanner' ); ?></th>
                                     <th><?php echo esc_html__( 'Page URL', 'broken-links-scanner' ); ?></th>
                                 </tr>
                             </thead>
@@ -224,6 +234,9 @@ class Broken_Links_Scanner {
                                         </td>
                                         <td>
                                             <strong><?php echo esc_html( $h1_result['h1_count'] ); ?></strong>
+                                        </td>
+                                        <td>
+                                            <?php echo 0 === (int) $h1_result['h1_count'] ? esc_html__( 'No H1 tag found', 'broken-links-scanner' ) : esc_html__( 'Multiple H1 tags', 'broken-links-scanner' ); ?>
                                         </td>
                                         <td>
                                             <a href="<?php echo esc_url( $h1_result['url'] ); ?>" target="_blank" rel="noopener noreferrer">
@@ -266,7 +279,7 @@ class Broken_Links_Scanner {
             'h1_count' => count( $multiple_h1_results ),
             'message' => sprintf(
                 /* translators: %d: number of broken links, %d: number of pages with multiple H1s */
-                __( 'Scan completed. Found %1$d broken links and %2$d pages with multiple H1 tags.', 'broken-links-scanner' ),
+                __( 'Scan completed. Found %1$d broken links and %2$d pages with H1 tag issues.', 'broken-links-scanner' ),
                 count( $broken_links ),
                 count( $multiple_h1_results )
             ),
@@ -295,10 +308,10 @@ class Broken_Links_Scanner {
      */
     private function scan_site_for_broken_links() {
         $broken_links = array();
-        $multiple_h1_results = array();
+        $h1_results = array();
         $status_cache = array();
+        $reported_links = array();
 
-        // Get all published posts and pages.
         $args = array(
             'post_type' => array( 'post', 'page' ),
             'post_status' => 'publish',
@@ -314,24 +327,25 @@ class Broken_Links_Scanner {
                 continue;
             }
 
-            /*
-             * Scan the rendered frontend page instead of post_content.
-             * This includes links output by the theme, Elementor, widgets,
-             * header, footer, menus, and the page content.
-             */
             $page_html = $this->get_rendered_page_html( $page_url );
 
             if ( false === $page_html ) {
-                // Fall back to post content if the frontend page cannot be fetched.
-                $links = $this->extract_links_from_content( $post->post_content );
-                $h1_count = 0;
+                $links = array();
+                foreach ( $this->extract_links_from_content( $post->post_content ) as $link ) {
+                    $links[] = array(
+                        'url' => $link,
+                        'location' => 'page',
+                    );
+                }
+                $h1_count = null;
             } else {
                 $links = $this->extract_links_from_html( $page_html, $page_url );
                 $h1_count = $this->count_h1_tags( $page_html );
             }
 
-            if ( $h1_count > 1 ) {
-                $multiple_h1_results[] = array(
+            // Report both missing H1s and multiple H1s.
+            if ( null !== $h1_count && ( 0 === $h1_count || $h1_count > 1 ) ) {
+                $h1_results[] = array(
                     'page_id' => $post->ID,
                     'page_name' => $post->post_title,
                     'url' => $page_url,
@@ -339,18 +353,41 @@ class Broken_Links_Scanner {
                 );
             }
 
-            foreach ( $links as $link ) {
-                // Cache status checks so repeated header/footer links are not requested over and over.
+            foreach ( $links as $link_data ) {
+                $link = $link_data['url'];
+                $location = $link_data['location'];
+
                 if ( ! array_key_exists( $link, $status_cache ) ) {
                     $status_cache[ $link ] = $this->check_link_status( $link );
                 }
 
                 $status_code = $status_cache[ $link ];
 
-                if ( 404 === $status_code ) {
+                if ( 404 !== $status_code ) {
+                    continue;
+                }
+
+                // Menu/footer/header links are site-wide. Report them once using their location
+                // instead of attributing them to whichever page happened to be scanned first.
+                if ( in_array( $location, array( 'menu', 'footer', 'header' ), true ) ) {
+                    $report_key = $link . '|' . $location;
+
+                    if ( isset( $reported_links[ $report_key ] ) ) {
+                        continue;
+                    }
+
+                    $reported_links[ $report_key ] = true;
+                    $broken_links[] = array(
+                        'url' => $link,
+                        'page_id' => 0,
+                        'location' => $location,
+                        'status_code' => $status_code,
+                    );
+                } else {
                     $broken_links[] = array(
                         'url' => $link,
                         'page_id' => $post->ID,
+                        'location' => 'page',
                         'status_code' => $status_code,
                     );
                 }
@@ -359,7 +396,7 @@ class Broken_Links_Scanner {
 
         return array(
             'broken_links' => $broken_links,
-            'multiple_h1_results' => $multiple_h1_results,
+            'multiple_h1_results' => $h1_results,
         );
     }
 
@@ -399,8 +436,6 @@ class Broken_Links_Scanner {
         if ( class_exists( 'DOMDocument' ) ) {
             $previous_state = libxml_use_internal_errors( true );
             $dom = new DOMDocument();
-
-            // Suppress warnings caused by modern HTML5 markup.
             $dom->loadHTML( '<?xml encoding="UTF-8">' . $html );
             libxml_clear_errors();
             libxml_use_internal_errors( $previous_state );
@@ -414,21 +449,63 @@ class Broken_Links_Scanner {
 
                 $absolute_url = $this->make_absolute_url( $href, $page_url );
 
-                if ( $absolute_url ) {
-                    $links[] = $absolute_url;
+                if ( ! $absolute_url ) {
+                    continue;
                 }
+
+                $location = 'page';
+                $node = $anchor;
+
+                // A link inside a nav is considered a menu link. Footer takes precedence
+                // so footer navigation is reported as Found in Footer rather than Menu.
+                while ( $node instanceof DOMElement && $node->parentNode ) {
+                    $node = $node->parentNode;
+
+                    if ( $node instanceof DOMElement ) {
+                        $tag = strtolower( $node->tagName );
+
+                        if ( 'footer' === $tag ) {
+                            $location = 'footer';
+                            break;
+                        }
+
+                        if ( 'nav' === $tag ) {
+                            $location = 'menu';
+                            break;
+                        }
+
+                        if ( 'header' === $tag && 'page' === $location ) {
+                            $location = 'header';
+                        }
+                    }
+                }
+
+                $links[] = array(
+                    'url' => $absolute_url,
+                    'location' => $location,
+                );
             }
         } elseif ( preg_match_all( '/<a[^>]+href=["\']([^"\']+)["\']/i', $html, $matches ) ) {
             foreach ( $matches[1] as $href ) {
                 $absolute_url = $this->make_absolute_url( trim( $href ), $page_url );
 
                 if ( $absolute_url ) {
-                    $links[] = $absolute_url;
+                    $links[] = array(
+                        'url' => $absolute_url,
+                        'location' => 'page',
+                    );
                 }
             }
         }
 
-        return array_values( array_unique( $links ) );
+        // Preserve the first occurrence/location of each link on a page.
+        $unique = array();
+        foreach ( $links as $link_data ) {
+            $key = $link_data['url'] . '|' . $link_data['location'];
+            $unique[ $key ] = $link_data;
+        }
+
+        return array_values( $unique );
     }
 
     /**
